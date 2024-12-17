@@ -6270,76 +6270,107 @@ def extract_experience_years(jd_text):
     return [1, -1]
 
 
-# exp_range = extract_experience_years(jd_text)
-# print(exp_range[0])
-
+import torch
+import re
 from sentence_transformers import SentenceTransformer, util
-# Load a pre-trained model for embedding
-embedding_compare_model= SentenceTransformer('all-mpnet-base-v2')
-def Score_technical_skills(jd_text,candidate_skills_list):
-  jd_skills = set()
-  for skill_key, canonical_skills in skills_dict.items():
-      # Check if skill_key is in JD text
-      if re.search(rf"\b{re.escape(skill_key)}\b", jd_text, re.IGNORECASE):
-          print(skill_key)
-          jd_skills.update(canonical_skills)  # Ensure canonical_skills is a list or set
-  # Tokenization with special handling for technical skills
-  def tokenize(text):
-      # Preserve special characters for technical skills
-      # Split by spaces, but keep special characters attached to words
-      tokens = re.findall(r'[\w+#.]+', text)
-      return [token.lower() for token in tokens]
+# Explicitly set device to CUDA if available
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("device_is: ",device)
+# Load embedding model on the correct device
+embedding_compare_model = SentenceTransformer('all-mpnet-base-v2', device=str(device))
+def Score_technical_skills(jd_text, candidate_skills_list):
 
-  # Tokenize the job description
-  tokens = tokenize(jd_text)
+    jd_skills = set()
+    for skill_key, canonical_skills in skills_dict.items():
+        # Check if skill_key is in JD text
+        if re.search(rf"\b{re.escape(skill_key)}\b", jd_text, re.IGNORECASE):
+            print(skill_key)
+            jd_skills.update(canonical_skills)  # Ensure canonical_skills is a list or set
+    
+    # Tokenization with special handling for technical skills
+    def tokenize(text):
+        # Preserve special characters for technical skills
+        # Split by spaces, but keep special characters attached to words
+        tokens = re.findall(r'[\w+#.]+', text)
+        return [token.lower() for token in tokens]
 
-  # Second pass: Partial matching against tokens
-  for token in tokens:
-      for skill_key, canonical_skills in skills_dict.items():
-          # Check if token is a substring of skill key or vice versa
-          if token == skill_key.lower():
-                  jd_skills.update(canonical_skills)
-  print(jd_skills)
-  # Step 2: Normalize candidate skills
-  candidate_skills = set()
-  for skill in candidate_skills_list:
-      normalized_skill = skill.lower()
-      if normalized_skill in skills_dict:
-          candidate_skills.update(skills_dict[normalized_skill])  # Same here
+    # Tokenize the job description
+    tokens = tokenize(jd_text)
 
-  # Compute embeddings for both JD skills and candidate skills
-  jd_skills_list = list(jd_skills)
-  candidate_skills_list = list(candidate_skills)
-  jd_categories = [
-      skills_to_category[skill] if skill in skills_to_category else skill
-      for skill in jd_skills_list
-  ]
-  candidate_categories = [skills_to_category[skill] if skill in skills_to_category else skill for skill in candidate_skills_list ]
+    # Second pass: Partial matching against tokens
+    for token in tokens:
+        for skill_key, canonical_skills in skills_dict.items():
+            # Check if token is a substring of skill key or vice versa
+            if token == skill_key.lower():
+                jd_skills.update(canonical_skills)
+    
+    print(jd_skills)
+    
+    # Step 2: Normalize candidate skills
+    candidate_skills = set()
+    for skill in candidate_skills_list:
+        normalized_skill = skill.lower()
+        if normalized_skill in skills_dict:
+            candidate_skills.update(skills_dict[normalized_skill])
 
-  embeddings_jd = embedding_compare_model.encode(jd_skills_list, convert_to_tensor=True)
-  embeddings_candidate = embedding_compare_model.encode(candidate_skills_list, convert_to_tensor=True)
-  embeddings_jd_categories = embedding_compare_model.encode(jd_categories, convert_to_tensor=True)
-  embeddings_candidate_categories = embedding_compare_model.encode(candidate_categories, convert_to_tensor=True)
-  # Compute cosine similarity
-  similarities = util.pytorch_cos_sim(embeddings_jd, embeddings_candidate)
-  similarities_categories = util.pytorch_cos_sim(embeddings_jd_categories, embeddings_candidate_categories)
+    # Compute embeddings for both JD skills and candidate skills
+    jd_skills_list = list(jd_skills)
+    candidate_skills_list = list(candidate_skills)
+    
+    # Compute category mappings
+    jd_categories = [
+        skills_to_category.get(skill, skill)
+        for skill in jd_skills_list
+    ]
+    candidate_categories = [
+        skills_to_category.get(skill, skill)
+        for skill in candidate_skills_list
+    ]
 
-  # Display results and calculate the sum of max similarities
-  sum_max_similarities = 0
-  for i, comparison_skill in enumerate(jd_skills_list):
-      max_similarity = similarities[i].max().item()  # Find the maximum similarity for this skill
-      max_similarity_categories = similarities_categories[i].max().item()
-      overall_max= max(max_similarity,0.75*max_similarity_categories)
-      if max_similarity>0.25 :
-          sum_max_similarities += min(1,overall_max)
-      print(f"\nSimilarities for: {comparison_skill}")
-      for j, cv_skill in enumerate(candidate_skills_list):
-          print(f"  {cv_skill}: {similarities[i, j].item():.2f},  category match: {0.75*similarities_categories[i, j].item():.2f}")
+    # Explicitly move embeddings to CUDA
+    embeddings_jd = embedding_compare_model.encode(
+        jd_skills_list, 
+        convert_to_tensor=True, 
+        device=device
+    )
+    embeddings_candidate = embedding_compare_model.encode(
+        candidate_skills_list, 
+        convert_to_tensor=True, 
+        device=device
+    )
+    embeddings_jd_categories = embedding_compare_model.encode(
+        jd_categories, 
+        convert_to_tensor=True, 
+        device=device
+    )
+    embeddings_candidate_categories = embedding_compare_model.encode(
+        candidate_categories, 
+        convert_to_tensor=True, 
+        device=device
+    )
+    print("here333")
+    # Compute cosine similarity (ensure on the same device)
+    similarities = util.pytorch_cos_sim(embeddings_jd, embeddings_candidate)
+    similarities_categories = util.pytorch_cos_sim(embeddings_jd_categories, embeddings_candidate_categories)
 
-  print("\nTotal sum of max similarity scores:", sum_max_similarities)
-  overall_skill_score = (sum_max_similarities / len(jd_skills_list))*100
-  print("Overall Skill Score:", overall_skill_score)
-  return overall_skill_score
+    # Display results and calculate the sum of max similarities
+    sum_max_similarities = 0
+    for i, comparison_skill in enumerate(jd_skills_list):
+        max_similarity = similarities[i].max().item()  # Find the maximum similarity for this skill
+        max_similarity_categories = similarities_categories[i].max().item()
+        overall_max = max(max_similarity, 0.75 * max_similarity_categories)
+        
+        if max_similarity > 0.25:
+            sum_max_similarities += min(1, overall_max)
+        
+        print(f"\nSimilarities for: {comparison_skill}")
+        for j, cv_skill in enumerate(candidate_skills_list):
+            print(f"  {cv_skill}: {similarities[i, j].item():.2f},  category match: {0.75*similarities_categories[i, j].item():.2f}")
+
+    print("\nTotal sum of max similarity scores:", sum_max_similarities)
+    overall_skill_score = (sum_max_similarities / len(jd_skills_list)) * 100
+    print("Overall Skill Score:", overall_skill_score)
+    return overall_skill_score
 
 import ast
 import re
@@ -6398,11 +6429,27 @@ def calculate_bracketed_score(percentage):
                 return 0
 def overall_role_score(job_titles,required_role):
   extracted_job_role=process_rag_result(job_titles)
-  required_embedding = embedding_compare_model.encode(required_role)
-  extracted_embedding = embedding_compare_model.encode(extracted_job_role['primary role'])
+  # Encode embeddings with explicit device handling
 
-  # Calculate cosine similarity
-  cosine_similarity = 1 - cosine(required_embedding, extracted_embedding)
+  required_embedding = embedding_compare_model.encode(
+      required_role, 
+      convert_to_tensor=True
+  )
+  extracted_embedding = embedding_compare_model.encode(
+      extracted_job_role['primary role'], 
+      convert_to_tensor=True
+  )
+
+  # Ensure both embeddings are moved to CPU and converted to numpy
+  required_embedding_np = required_embedding.cpu().numpy()
+  extracted_embedding_np = extracted_embedding.cpu().numpy()
+
+  # Verify shapes and types
+  print("Required embedding shape:", required_embedding_np.shape)
+  print("Extracted embedding shape:", extracted_embedding_np.shape)
+  
+  # Calculate cosine similarity using numpy arrays
+  cosine_similarity = 1 - cosine(required_embedding_np, extracted_embedding_np)
   # Normalize similarity to percentage
   similarity_percentage = cosine_similarity * 100
 
@@ -6410,7 +6457,6 @@ def overall_role_score(job_titles,required_role):
   print(extracted_job_role)
   print(role_similarity_percentage)
   return role_similarity_percentage
-
 def score_contact_and_word_count(result,role_similarity_percentage):
     # Extract contact info and word count from the result
     contact_info = result.get("contact_info", {})
