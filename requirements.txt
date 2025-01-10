@@ -40,4 +40,6 @@ PyMuPDF==1.25.1
 Flask==3.0.3
 Flask-Cors==5.0.0
 pyngrok==7.2.2
+llama-index-embeddings-huggingface
+llama-index-embeddings-instructor
 https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1-py3-none-any.whl
